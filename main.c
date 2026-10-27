@@ -79,9 +79,84 @@ static int dedup_readdir(const char *path, void *buf, fuse_fill_dir_t filler,
     return 0;
 }
 
+// 開啟檔案
+static int dedup_open(const char *path, struct fuse_file_info *fi)
+{
+    char fpath[PATH_MAX];
+    get_full_path(fpath, path);
+
+    // 使用系統的 open 函式
+    int res = open(fpath, fi->flags);
+    if (res == -1)
+    {
+        return -errno;
+    }
+    // 將系統回傳的 file descriptor 存起來，給後續的 read/write 使用
+    fi->fh = res;
+    return 0;
+}
+
+// 讀取檔案
+static int dedup_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+{
+    (void)path;
+    // 使用 pread 根據指定的 offset 讀取資料
+    int res = pread(fi->fh, buf, size, offset);
+    if (res == -1)
+    {
+        res = -errno;
+    }
+    return res;
+}
+
+// 寫入檔案
+static int dedup_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
+{
+    (void)path;
+    // 使用 pwrite 根據指定的 offset 寫入資料
+    // 未來「去重」的邏輯就會攔截在這個地方
+    int res = pwrite(fi->fh, buf, size, offset);
+    if (res == -1)
+    {
+        res = -errno;
+    }
+    return res;
+}
+
+// 建立新檔案
+static int dedup_create(const char *path, mode_t mode, struct fuse_file_info *fi)
+{
+    char fpath[PATH_MAX];
+    get_full_path(fpath, path);
+
+    // 呼叫系統 open 並帶入建立權限 (mode)
+    int res = open(fpath, fi->flags, mode);
+    if (res == -1)
+    {
+        return -errno;
+    }
+    fi->fh = res;
+    return 0;
+}
+
+// 關閉檔案
+static int dedup_release(const char *path, struct fuse_file_info *fi)
+{
+    (void)path;
+    // 關閉在 open 或 create 階段取得的 file descriptor
+    close(fi->fh);
+    return 0;
+}
+
+// 更新操作結構，把新的函式註冊進去
 static struct fuse_operations dedup_oper = {
     .getattr = dedup_getattr,
     .readdir = dedup_readdir,
+    .open = dedup_open,
+    .read = dedup_read,
+    .write = dedup_write,
+    .create = dedup_create,   // 新增：處理建立檔案請求
+    .release = dedup_release, // 新增：處理關閉檔案請求
 };
 
 int main(int argc, char *argv[])

@@ -9,6 +9,7 @@
 #include <dirent.h>
 #include <stdlib.h>
 #include <limits.h>
+#include <openssl/sha.h>
 
 // 定義底層的真實目錄（未來會指向你的 F2FS 掛載點）
 #define BACKING_DIR "/tmp/f2fs_lower"
@@ -22,6 +23,23 @@ static void get_full_path(char *fpath, const char *path)
     {
         strncat(fpath, path, PATH_MAX - strlen(BACKING_DIR) - 1);
     }
+}
+
+// 輔助函式：計算 SHA-256 並將結果轉為 64 字元的 16 進位字串
+static void calculate_sha256(const char *data, size_t len, char outputBuffer[65])
+{
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    SHA256_CTX sha256;
+
+    SHA256_Init(&sha256);
+    SHA256_Update(&sha256, data, len);
+    SHA256_Final(hash, &sha256);
+
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; i++)
+    {
+        sprintf(outputBuffer + (i * 2), "%02x", hash[i]);
+    }
+    outputBuffer[64] = 0; // 字串結尾
 }
 
 // 取得檔案屬性
@@ -113,8 +131,15 @@ static int dedup_read(const char *path, char *buf, size_t size, off_t offset, st
 static int dedup_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi)
 {
     (void)path;
-    // 使用 pwrite 根據指定的 offset 寫入資料
-    // 未來「去重」的邏輯就會攔截在這個地方
+
+    // --- 【去重攔截測試】 ---
+    char hash_str[65];
+    calculate_sha256(buf, size, hash_str);
+    // 因為 FUSE 是在前景執行 (-f)，printf 會直接印在第一台終端機上
+    printf("[DEDUP] 攔截到寫入請求! 大小: %zu bytes, Hash 指紋: %s\n", size, hash_str);
+    // ------------------------
+
+    // 目前先保留原本的寫入機制 (Passthrough)
     int res = pwrite(fi->fh, buf, size, offset);
     if (res == -1)
     {
